@@ -1,128 +1,94 @@
-from moviepy.editor import AudioClip, AudioFileClip, concatenate_audioclips
+import argparse
+import glob
 import math
+import os
 
-def detect_leading_silence(audio, threshold=-0.05, window_size=0.1):
+from moviepy.editor import AudioFileClip, concatenate_audioclips
+
+
+def glob_files(folder, file_type='*'):
+    search_string = os.path.join(folder, file_type)
+    files = glob.glob(search_string)
+
+    print('Searching ', search_string)
+    paths = []
+    for f in files:
+      if os.path.isdir(f):
+        sub_paths = glob_files(f + '/')
+        paths += sub_paths
+      else:
+        paths.append(f)
+
+    # We sort the images in alphabetical order to match them
+    #  to the annotation files
+    paths.sort()
+
+    return paths
+
+
+def extract_voice(file_in, file_out, threshold=0.03, window_size=0.5):
+    print("Processing {} to {}".format(file_in, file_out))
+    audio = AudioFileClip(file_in)
+
+    print(audio.duration)
+    n_windows = math.floor(audio.end / window_size)
+
+    keep_clips = []
+
+    is_prev_silence = True
     start_time = 0
-    n_windows = math.floor(audio.end / window_size)
 
-    for i in range(n_windows):
-        print(" #{} - {}".format(i * window_size, (i + 1) * window_size))
+    i = 1
+    while i < n_windows:
+        # print(" #{} - {}".format(i * window_size, (i + 1) * window_size))
         s = audio.subclip(i * window_size, (i + 1) * window_size)
-        print(s.max_volume())
+        print(i, s.max_volume())
         if s.max_volume() >= threshold:
-            start_time = i * window_size
-            break
+            if is_prev_silence: # start speaking
+                start_time = i * window_size
 
-    return start_time
+            is_prev_silence = False
+
+        else:
+            if not is_prev_silence: # end speaking
+                if i < n_windows - 2:
+                    end_time = (i + 2) * window_size
+                else:
+                    end_time = i * window_size
+                i += 1
+                keep_clips.append(audio.subclip(start_time, end_time))
+                # print(f'{start_time} - {end_time}')
+
+            is_prev_silence = True
+        i += 1
+
+    edited_audio = concatenate_audioclips(keep_clips)
+
+    print("Writing to {}".format(file_out))
+    edited_audio.write_audiofile(file_out)
+
+    audio.close()
+    edited_audio.close()
 
 
-def detect_trailing_silence(audio, threshold=-0.05, window_size=0.1):
-    end_time = 0
-    n_windows = math.floor(audio.end / window_size)
+def extract_voices(path_in, path_out):
+    files = glob_files(path_in)
 
-    for i in range(n_windows, -1, -1):
-        print(" #{} - {}".format(i * window_size, (i - 1) * window_size))
-        s = audio.subclip(i * window_size, (i - 1) * window_size)
-        print(s.max_volume())
-        if s.max_volume() < threshold:
-            end_time = i * window_size
-            break
+    if not os.path.exists(path_out):
+        print("Creating folder to ", path_out)
+        os.mkdir(path_out)
 
-    return end_time
+    for file_in in files:
+        file_out = os.path.join(path_out, os.path.basename(file_in))
+
+        extract_voice(file_in, file_out)
 
 
-audio_path = 'data\\audio\\50A_F_1402_6.mp3'
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-path_in", action="store", dest="path_in", type=str)
+    parser.add_argument("-path_out", action="store", dest="path_out", type=str)
 
-threshold = 0.05
-window_size = 0.5
+    args = parser.parse_args()
 
-audio = AudioFileClip(audio_path)
-
-print(audio.duration)
-
-n_windows = math.floor(audio.end / window_size)
-
-keep_clips = []
-
-is_prev_silence = True
-start_time = 0
-end_time = 0
-
-i = 0
-while i < n_windows:
-    print(" #{} - {}".format(i * window_size, (i + 1) * window_size))
-    s = audio.subclip(i * window_size, (i + 1) * window_size)
-    print(s.max_volume())
-    if s.max_volume() >= threshold:
-        if is_prev_silence: # start speaking
-            start_time = i * window_size
-
-        is_prev_silence = False
-    else:
-        if not is_prev_silence: # end speaking
-            end_time = (i + 1) * window_size
-            i += 2
-            keep_clips.append(audio.subclip(start_time, end_time))
-            print(f'{start_time} - {end_time}')
-
-        is_prev_silence = True
-    i += 1
-
-# for i in range(n_windows):
-#     print(" #{} - {}".format(i * window_size, (i + 1) * window_size))
-#     s = audio.subclip(i * window_size, (i + 1) * window_size)
-#     print(s.max_volume())
-#     if s.max_volume() >= threshold:
-#         if is_prev_silence: # start speaking
-#             start_time = i * window_size
-#
-#         is_prev_silence = False
-#     else:
-#         if not is_prev_silence: # end speaking
-#             end_time = i * window_size
-#             keep_clips.append(audio.subclip(start_time, end_time))
-#             print(f'{start_time} - {end_time}')
-#
-#         is_prev_silence = True
-
-edited_audio = concatenate_audioclips(keep_clips)
-
-edited_audio.write_audiofile(
-    'out.mp3',
-    # codec='aac'
-)
-
-audio.close()
-edited_audio.close()
-
-#
-# from pydub import AudioSegment
-#
-# def detect_leading_silence(sound, silence_threshold=-0.05, chunk_size=10):
-#     '''
-#     sound is a pydub.AudioSegment
-#     silence_threshold in dB
-#     chunk_size in ms
-#
-#     iterate over chunks until you find the first one with sound
-#     '''
-#     trim_ms = 0 # ms
-#
-#     assert chunk_size > 0 # to avoid infinite loop
-#     while sound[trim_ms:trim_ms+chunk_size].dBFS < silence_threshold and trim_ms < len(sound):
-#         print(sound[trim_ms:trim_ms+chunk_size].dBFS)
-#         trim_ms += chunk_size
-#
-#     return trim_ms
-#
-# sound = AudioSegment.from_file('data\\audio\\50A_F_1402_6.mp3', format="mp3")
-#
-# start_trim = detect_leading_silence(sound)
-# end_trim = detect_leading_silence(sound.reverse())
-#
-# duration = len(sound)
-# trimmed_sound = sound[start_trim:duration-end_trim]
-#
-# trimmed_sound.export('out-1.mp3', format='mp3')
-#
-# # audio_path = 'data\\audio\\50A_F_1402_6.mp3'
+    extract_voices(args.path_in, args.path_out)
