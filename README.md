@@ -1,2 +1,3 @@
 # MediaEditor
-My auto media editor
+## TrimAudio
+Trims an audio file with just where the voice portion.
