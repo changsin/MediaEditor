@@ -3,6 +3,10 @@ import glob
 import math
 import os
 
+# from moviepy.audio.io import AudioFileClip
+# from moviepy.audio.AudioClip import concatenate_audioclips
+# import moviepy
+
 from moviepy.editor import AudioFileClip, concatenate_audioclips
 
 
@@ -26,7 +30,7 @@ def glob_files(folder, file_type='*'):
     return paths
 
 
-def extract_voice(file_in, file_out, threshold=0.03, window_size=0.5):
+def extract_voice(file_in, file_out, threshold=0.01, window_size=0.3):
     print("Processing {} to {}".format(file_in, file_out))
     audio = AudioFileClip(file_in)
 
@@ -37,8 +41,9 @@ def extract_voice(file_in, file_out, threshold=0.03, window_size=0.5):
 
     is_prev_silence = True
     start_time = 0
+    end_time = 0
 
-    i = 1
+    i = 2
     while i < n_windows:
         # print(" #{} - {}".format(i * window_size, (i + 1) * window_size))
         s = audio.subclip(i * window_size, (i + 1) * window_size)
@@ -46,32 +51,41 @@ def extract_voice(file_in, file_out, threshold=0.03, window_size=0.5):
         if s.max_volume() >= threshold:
             if is_prev_silence: # start speaking
                 start_time = i * window_size
+                print('start_time', start_time)
 
             is_prev_silence = False
 
         else:
             if not is_prev_silence: # end speaking
-                if i < n_windows - 2:
-                    end_time = (i + 2) * window_size
+                if i < n_windows - 1:
+                    end_time = (i + 1) * window_size
+                    i += 1
                 else:
-                    end_time = i * window_size
-                i += 1
+                    end_time = audio.end
                 keep_clips.append(audio.subclip(start_time, end_time))
-                # print(f'{start_time} - {end_time}')
+                print(f'{start_time} - {end_time}')
 
             is_prev_silence = True
+
         i += 1
 
-    edited_audio = concatenate_audioclips(keep_clips)
+    if (len(keep_clips) == 0 and start_time > 0) or end_time < start_time:
+        end_time = audio.end
+        keep_clips.append((audio.subclip(start_time, end_time)))
 
-    print("Writing to {}".format(file_out))
-    edited_audio.write_audiofile(file_out)
+    if len(keep_clips) > 0:
+        edited_audio = concatenate_audioclips(keep_clips)
+
+        print("Writing to {}".format(file_out))
+        edited_audio.write_audiofile(file_out)
+        edited_audio.close()
+    else:
+        print("###Empty clips ", file_in)
 
     audio.close()
-    edited_audio.close()
 
 
-def extract_voices(path_in, path_out):
+def extract_voices(path_in, path_out, threshold=0.01, window_size=0.3):
     files = glob_files(path_in)
 
     if not os.path.exists(path_out):
@@ -88,7 +102,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("-path_in", action="store", dest="path_in", type=str)
     parser.add_argument("-path_out", action="store", dest="path_out", type=str)
+    parser.add_argument("-threshold", action="store", dest="threshold", type=str)
+    parser.add_argument("-window_size", action="store", dest="window_size", type=str)
 
     args = parser.parse_args()
 
-    extract_voices(args.path_in, args.path_out)
+    extract_voices(args.path_in, args.path_out, threshold=args.threshold, window_size=args.window_size)
