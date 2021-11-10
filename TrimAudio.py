@@ -3,11 +3,10 @@ import glob
 import math
 import os
 
-# from moviepy.audio.io import AudioFileClip
-# from moviepy.audio.AudioClip import concatenate_audioclips
-# import moviepy
+from pydub import AudioSegment
 
-from moviepy.editor import AudioFileClip, concatenate_audioclips
+DEFAULT_THRESHOLD = 60
+DEFAULT_WINDOW_SIZE = 0.3
 
 
 def glob_files(folder, file_type='*'):
@@ -30,12 +29,14 @@ def glob_files(folder, file_type='*'):
     return paths
 
 
-def extract_voice(file_in, file_out, threshold=0.01, window_size=0.3):
-    print("Processing {} to {}".format(file_in, file_out))
-    audio = AudioFileClip(file_in)
+def extract_voice(file_in, file_out, threshold=DEFAULT_THRESHOLD, window_size=DEFAULT_WINDOW_SIZE):
 
-    print(audio.duration)
-    n_windows = math.floor(audio.end / window_size)
+    audio = AudioSegment.from_file(file_in, format="mp3")
+
+    audio_end = len(audio)/1000
+    # print("Duration", len(audio)/1000)
+
+    n_windows = math.floor(audio_end / window_size)
 
     keep_clips = []
 
@@ -45,13 +46,15 @@ def extract_voice(file_in, file_out, threshold=0.01, window_size=0.3):
 
     i = 2
     while i < n_windows:
-        # print(" #{} - {}".format(i * window_size, (i + 1) * window_size))
-        s = audio.subclip(i * window_size, (i + 1) * window_size)
-        print(i, s.max_volume())
-        if s.max_volume() >= threshold:
+        # s = audio.subclip(i * window_size, (i + 1) * window_size)
+        s = audio[i * window_size*1000:(i + 1) * window_size*1000]
+        # print(s.raw_data)
+        # print(" #{}: {} - {} {}".format(i, i * window_size, (i + 1) * window_size, s.dBFS))
+        # print(" #{}: {}".format(i, s.dBFS*-1))
+        if s.dBFS*-1 < threshold:
             if is_prev_silence: # start speaking
                 start_time = i * window_size
-                print('start_time', start_time)
+                # print(' #start_time', start_time)
 
             is_prev_silence = False
 
@@ -61,31 +64,35 @@ def extract_voice(file_in, file_out, threshold=0.01, window_size=0.3):
                     end_time = (i + 1) * window_size
                     i += 1
                 else:
-                    end_time = audio.end
-                keep_clips.append(audio.subclip(start_time, end_time))
-                print(f'{start_time} - {end_time}')
+                    end_time = audio_end
+                keep_clips.append(audio[start_time*1000:end_time*1000])
+                # print(f' #duration:{start_time} - {end_time}')
 
             is_prev_silence = True
 
         i += 1
 
     if (len(keep_clips) == 0 and start_time > 0) or end_time < start_time:
-        end_time = audio.end
-        keep_clips.append((audio.subclip(start_time, end_time)))
+        keep_clips.append(audio[start_time*1000:audio_end*1000])
 
     if len(keep_clips) > 0:
-        edited_audio = concatenate_audioclips(keep_clips)
+        edited_audio = keep_clips[0]
 
-        print("Writing to {}".format(file_out))
-        edited_audio.write_audiofile(file_out)
-        edited_audio.close()
+        # print("keep_clips:", len(keep_clips), len(keep_clips[0]), audio_end)
+        for i in range(len(keep_clips)):
+            if i == 0:
+                continue
+            # print("i", i, len(keep_clips[i]))
+            edited_audio = edited_audio.append(keep_clips[i])
+
+        print('Writing {} with duration {}'.format(file_out, len(edited_audio)))
+        edited_audio.export(file_out, format='mp3')
+
     else:
         print("###Empty clips ", file_in)
 
-    audio.close()
 
-
-def extract_voices(path_in, path_out, threshold=0.01, window_size=0.3):
+def extract_voices(path_in, path_out, threshold=DEFAULT_THRESHOLD, window_size=DEFAULT_WINDOW_SIZE):
     files = glob_files(path_in)
 
     if not os.path.exists(path_out):
@@ -95,16 +102,25 @@ def extract_voices(path_in, path_out, threshold=0.01, window_size=0.3):
     for file_in in files:
         file_out = os.path.join(path_out, os.path.basename(file_in))
 
-        extract_voice(file_in, file_out)
+        extract_voice(file_in, file_out, threshold=threshold, window_size=window_size)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("-path_in", action="store", dest="path_in", type=str)
-    parser.add_argument("-path_out", action="store", dest="path_out", type=str)
-    parser.add_argument("-threshold", action="store", dest="threshold", type=str)
-    parser.add_argument("-window_size", action="store", dest="window_size", type=str)
+    parser.add_argument("--path_in", action="store", dest="path_in", type=str)
+    parser.add_argument("--path_out", action="store", dest="path_out", type=str)
+    parser.add_argument("--threshold", action="store", dest="threshold", type=str)
+    parser.add_argument("--window_size", action="store", dest="window_size", type=str)
 
     args = parser.parse_args()
 
-    extract_voices(args.path_in, args.path_out, threshold=args.threshold, window_size=args.window_size)
+    threshold = DEFAULT_THRESHOLD
+    if args.threshold:
+        threshold = float(args.threshold)
+
+    window_size = DEFAULT_WINDOW_SIZE
+    if args.window_size:
+        window_size = float(args.window_size)
+
+    print("threshold={} window_size={}".format(threshold, window_size))
+    extract_voices(args.path_in, args.path_out, threshold=threshold, window_size=window_size)
